@@ -1,3 +1,39 @@
 reload:
   name: Reload
   description: Reload all eco_thermostat entities.
+
+set_hvac_state:
+  name: Set HVAC State
+  description: Set HVAC state mode for eco thermostat device.
+  target:
+    entity:
+      domain: climate
+  fields:
+    hvac_state:
+      name: HVAC state
+      description: New value of operation state mode.
+      selector:
+        select:
+          options:
+            - label: "Auto"
+              value: "auto"
+            - label: "Manual"
+              value: "manual"
+            - label: "Window Open"
+              value: "window-open"
+            - label: "Home Closed"
+              value: "home-closed"
+
+set_timer_duration:
+  name: Set Timer Duration
+  description: Set timer duration for eco thermostat device.
+  target:
+    entity:
+      domain: climate
+  fields:
+    duration:
+      name: Duration
+      description: Duration HH:MM:SS.
+      example: "00:01:00 or 60"
+      selector:
+        text:
