@@ -932,7 +932,7 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
             return
 
         now = self._get_time_now()
-        self._attr_is_week_holiday = now.weekday in (6, 0)
+        self._attr_is_week_holiday = now.weekday() in (5, 6)
         self._attr_is_calendar_holiday = self.hass.states.is_state(
             self._calendar_holidays, STATE_ON
         )
