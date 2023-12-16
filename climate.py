@@ -540,14 +540,16 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
             self._hvac_mode = HVACMode.HEAT
             self._heating_locked_since = None
             await self._async_control_heating(force=True)
+            self._hvac_mode_before = None
         elif hvac_mode == HVACMode.COOL:
             self._hvac_mode = HVACMode.COOL
             await self._async_control_heating(force=True)
+            self._hvac_mode_before = None
         elif hvac_mode == HVACMode.OFF:
             self._hvac_mode = HVACMode.OFF
-            # self._hvac_state = HVACState.OFF
             if self._is_device_active:
                 await self._async_heater_turn_off()
+            self._hvac_mode_before = None
         else:
             _LOGGER.error("Unrecognized hvac mode: %s", hvac_mode)
             return
@@ -572,13 +574,16 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
         if self._target_temp_before is None:
             self._target_temp_before = self._target_temp
 
+        if self._hvac_mode_before is None:
+            self._hvac_mode_before = HVACMode.HEAT
+
         self._hvac_state = newstate
         if newstate == HVACState.MANUAL:
             self._hvac_state_before = None
             if oldstate == HVACState.WINDOW_OPEN:
                 await self.async_set_hvac_mode(self._hvac_mode_before)
-                self._hvac_mode_before = None
             elif oldstate == HVACState.HOME_CLOSED:
+                await self.async_set_hvac_mode(self._hvac_mode_before)
                 await self._async_set_temperature(self._target_temp_before)
                 self._target_temp_before = None
 
@@ -589,10 +594,9 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
             self._hvac_state_before = None
             if oldstate == HVACState.WINDOW_OPEN:
                 await self.async_set_hvac_mode(self._hvac_mode_before)
-                self._hvac_mode_before = None
+            if oldstate == HVACState.HOME_CLOSED:
+                await self.async_set_hvac_mode(self._hvac_mode_before)
             else:
-                # TODO: recollir temp programada?
-                # await self._async_set_temperature(self._target_temp_before)
                 self._target_temp_before = None
 
             if timer_state.state != STATUS_IDLE:
@@ -607,6 +611,7 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
                 await self._async_manual_timer_pause()
 
         elif newstate == HVACState.HOME_CLOSED:
+            self._hvac_mode_before = self._hvac_mode
             self._hvac_state_before = oldstate
             self._target_temp_before = self._target_temp
             temp_away = self._presets[PRESET_AWAY]
