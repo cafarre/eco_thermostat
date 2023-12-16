@@ -27,7 +27,7 @@ Eco Thermostat for Home Assistant
       sleep_temp: 18
       #new fields
       min_hot_tolerance: -0.1
-      max_heating_locked: 
+      max_heating_locked:
         #minutes: 15
         seconds: 30
       max_temp_jumps:
@@ -89,10 +89,9 @@ Eco Thermostat for Home Assistant
           end: '23:59'
           temp: 20.5
 
-    #  TODO: 
+    #  TODO:
     #  *new fields
     #   max_time_on: 30m
     #   time_delay_on: 10m
     #  *Expose new attributes "threshold_temp_sensor"
     #  *Expose action: "activate with delay if temperature low"
-

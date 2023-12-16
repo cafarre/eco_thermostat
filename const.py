@@ -11,5 +11,3 @@ class HVACState(StrEnum):
     WINDOW_OPEN = "window-open"
     HOME_CLOSED = "home-closed"
     OFF = "off"
-
-
