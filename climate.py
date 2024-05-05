@@ -322,10 +322,15 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
         self._target_temp = target_temp
         self._attr_temperature_unit = unit
         self._attr_unique_id = unique_id
-        self._attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE
+
+        self._attr_supported_features = (
+            ClimateEntityFeature.TARGET_TEMPERATURE
+            | ClimateEntityFeature.TURN_OFF
+            | ClimateEntityFeature.TURN_ON
+        )
         if len(presets):
             self._attr_supported_features |= ClimateEntityFeature.PRESET_MODE
-            self._attr_preset_modes = [PRESET_NONE] + list(presets.keys())
+            self._attr_preset_modes = [PRESET_NONE, *presets.keys()]
         else:
             self._attr_preset_modes = [PRESET_NONE]
         self._presets = presets
