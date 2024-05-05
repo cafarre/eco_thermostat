@@ -266,6 +266,7 @@ async def async_setup_platform(
 class EcoThermostat(ClimateEntity, RestoreEntity):
     """Representation of a Eco Thermostat device."""
 
+    _enable_turn_on_off_backwards_compatibility = False
     _attr_should_poll = False
 
     def __init__(
