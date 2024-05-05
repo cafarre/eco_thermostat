@@ -1,6 +1,5 @@
 """Provides the constants needed for component."""
-
-from homeassistant.backports.enum import StrEnum
+from enum import StrEnum
 
 
 class HVACState(StrEnum):
