@@ -1,5 +1,5 @@
 # eco_thermostat
-Eco Thermostat for Home Assistant
+Eco Thermostat for Home Assistant, based on official "Generic Thermostat"
 
 
 **Example configuration:**

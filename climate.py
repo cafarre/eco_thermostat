@@ -101,18 +101,6 @@ CONF_PRESETS = {
 
 def time_validation(value: Any) -> time_sys:
     """Time valiadtion."""
-    # parts = str(value).split(":")
-    # if len(parts) < 2:
-    #     return None
-
-    # try:
-    #     hour = int(parts[0])
-    #     minute = int(parts[1])
-    #     second = int(parts[2]) if len(parts) > 2 else 0
-    #     return dt.time(hour, minute, second)
-    # except ValueError:
-    #     # ValueError if value cannot be converted to an int or not in range
-    #     return None
     time = cv.time(value)
     return time
 
