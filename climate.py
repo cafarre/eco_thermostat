@@ -10,6 +10,7 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.components.climate import (
+    ATTR_HVAC_MODE,
     ATTR_PRESET_MODE,
     PLATFORM_SCHEMA,
     PRESET_ACTIVITY,
@@ -266,7 +267,6 @@ async def async_setup_platform(
 class EcoThermostat(ClimateEntity, RestoreEntity):
     """Representation of a Eco Thermostat device."""
 
-    _enable_turn_on_off_backwards_compatibility = False
     _attr_should_poll = False
 
     def __init__(
@@ -321,6 +321,7 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
         self._max_temp = max_temp
         self._attr_preset_mode = PRESET_NONE
         self._target_temp = target_temp
+        self._attr_native_temperature_unit = unit
         self._attr_temperature_unit = unit
         self._attr_unique_id = unique_id
 
@@ -449,7 +450,13 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
                 self._attr_preset_mode = old_state.attributes.get(ATTR_PRESET_MODE)
 
             if not self._hvac_mode and old_state.state:
-                self._hvac_mode = old_state.state
+                if old_state.state in self.hvac_modes:
+                    self._hvac_mode = HVACMode(old_state.state)
+                elif old_state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+                    try:
+                        self._hvac_mode = HVACMode(old_state.state)
+                    except ValueError:
+                        self._hvac_mode = HVACMode.OFF
 
             # if old_state.attributes.get(ATTR_HVAC_STATE) is not None:
             #    self._hvac_state = old_state.attributes.get(ATTR_HVAC_STATE)
@@ -490,9 +497,14 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
         return self.precision
 
     @property
-    def current_temperature(self):
+    def native_current_temperature(self):
         """Return the sensor temperature."""
         return self._cur_temp
+
+    @property
+    def current_temperature(self):
+        """Return the sensor temperature (backward compatibility)."""
+        return self.native_current_temperature
 
     @property
     def hvac_mode(self):
@@ -524,9 +536,14 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
         return HVACAction.HEATING
 
     @property
-    def target_temperature(self):
+    def native_target_temperature(self):
         """Return the temperature we try to reach."""
         return self._target_temp
+
+    @property
+    def target_temperature(self):
+        """Return the temperature we try to reach (backward compatibility)."""
+        return self.native_target_temperature
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set hvac mode."""
@@ -617,10 +634,23 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
         self.async_write_ha_state()
         _LOGGER.info("OK Service Set HVAC State to: %s", self._hvac_state)
 
+    async def async_turn_on(self) -> None:
+        """Turn the entity on."""
+        if HVACMode.HEAT in self.hvac_modes:
+            await self.async_set_hvac_mode(HVACMode.HEAT)
+        elif HVACMode.COOL in self.hvac_modes:
+            await self.async_set_hvac_mode(HVACMode.COOL)
+
+    async def async_turn_off(self) -> None:
+        """Turn the entity off."""
+        await self.async_set_hvac_mode(HVACMode.OFF)
+
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set new target temperature."""
         if (temperature := kwargs.get(ATTR_TEMPERATURE)) is None:
             return
+        if (hvac_mode := kwargs.get(ATTR_HVAC_MODE)) is not None:
+            await self.async_set_hvac_mode(hvac_mode)
         await self._async_set_temperature(temperature, auto=False)
 
     async def _async_set_temperature(self, target_temp, auto=True) -> None:
@@ -1063,6 +1093,7 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
         if self._attr_poweron_since is not None:
             attr_poweron_since = self._attr_poweron_since.strftime("%d/%m/%Y, %H:%M:%S")
 
+        _max_heating_locked = None
         if self._max_heating_locked is not None:
             _max_heating_locked = _format_timedelta(self._max_heating_locked)
 
