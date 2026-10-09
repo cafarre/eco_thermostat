@@ -1,0 +1,95 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Eco Thermostat",
+        "description": "Configure the core thermostat entity.",
+        "data": {
+          "name": "Name",
+          "heater": "Heater switch or input boolean",
+          "target_sensor": "Temperature sensor",
+          "ac_mode": "Cooling mode (A/C)",
+          "min_temp": "Minimum temperature",
+          "max_temp": "Maximum temperature",
+          "cold_tolerance": "Cold tolerance",
+          "hot_tolerance": "Hot tolerance",
+          "target_temp_step": "Target temperature step",
+          "precision": "Display precision",
+          "initial_hvac_mode": "Initial HVAC mode"
+        }
+      },
+      "presets": {
+        "title": "Temperature presets",
+        "description": "Configure predefined temperatures for preset modes.",
+        "data": {
+          "away_temp": "Away temperature",
+          "comfort_temp": "Comfort temperature",
+          "home_temp": "Home temperature",
+          "sleep_temp": "Sleep temperature"
+        }
+      },
+      "eco_settings": {
+        "title": "Eco settings and schedules",
+        "description": "Configure safety timers, calendars, dynamic schedules and tolerance rules.",
+        "data": {
+          "manual_timer": "Manual timer entity",
+          "calendar_holidays": "Holiday calendar entity",
+          "min_cycle_duration": "Minimum cycle duration",
+          "max_time_on": "Maximum consecutive time ON",
+          "max_heating_locked": "Maximum lock duration after cycle",
+          "min_hot_tolerance": "Minimum hot tolerance",
+          "max_temp_jumps": "Temperature jumps tolerance (YAML)",
+          "schedule_temp": "Regular temperature schedule (YAML)",
+          "schedule_temp_holidays": "Holiday temperature schedule (YAML)"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Device is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Eco Thermostat settings",
+        "description": "Update sensor, heater, and tolerance settings.",
+        "data": {
+          "heater": "Heater switch or input boolean",
+          "target_sensor": "Temperature sensor",
+          "ac_mode": "Cooling mode (A/C)",
+          "min_temp": "Minimum temperature",
+          "max_temp": "Maximum temperature",
+          "cold_tolerance": "Cold tolerance",
+          "hot_tolerance": "Hot tolerance",
+          "target_temp_step": "Target temperature step",
+          "precision": "Display precision"
+        }
+      },
+      "presets": {
+        "title": "Temperature presets",
+        "description": "Configure predefined temperatures for preset modes.",
+        "data": {
+          "away_temp": "Away temperature",
+          "comfort_temp": "Comfort temperature",
+          "home_temp": "Home temperature",
+          "sleep_temp": "Sleep temperature"
+        }
+      },
+      "eco_settings": {
+        "title": "Eco settings and schedules",
+        "description": "Configure safety timers, calendars, dynamic schedules and tolerance rules.",
+        "data": {
+          "manual_timer": "Manual timer entity",
+          "calendar_holidays": "Holiday calendar entity",
+          "min_cycle_duration": "Minimum cycle duration",
+          "max_time_on": "Maximum consecutive time ON",
+          "max_heating_locked": "Maximum lock duration after cycle",
+          "min_hot_tolerance": "Minimum hot tolerance",
+          "max_temp_jumps": "Temperature jumps tolerance (YAML)",
+          "schedule_temp": "Regular temperature schedule (YAML)",
+          "schedule_temp_holidays": "Holiday temperature schedule (YAML)"
+        }
+      }
+    }
+  }
+}

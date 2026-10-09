@@ -9,6 +9,7 @@ from typing import Any
 
 import voluptuous as vol
 
+from homeassistant.config_entries import ConfigEntry, SOURCE_IMPORT
 from homeassistant.components.climate import (
     ATTR_HVAC_MODE,
     ATTR_PRESET_MODE,
@@ -174,17 +175,28 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
 ).extend({vol.Optional(v): vol.Coerce(float) for (k, v) in CONF_PRESETS.items()})
 
 
-async def async_setup_platform(
-    hass: HomeAssistant,
-    config: ConfigType,
-    async_add_entities: AddEntitiesCallback,
-    discovery_info: DiscoveryInfoType | None = None,
-) -> None:
-    """Set up the eco thermostat platform."""
+def _parse_duration(val: Any) -> timedelta | None:
+    """Parse duration from dict, string, or timedelta."""
+    if val is None:
+        return None
+    if isinstance(val, timedelta):
+        return val
+    try:
+        return cv.time_period(val)
+    except Exception:
+        _LOGGER.warning("Could not parse time period: %s", val)
+        return None
 
-    await async_setup_reload_service(hass, DOMAIN, PLATFORMS)
 
-    platform = entity_platform.async_get_current_platform()
+_SERVICES_REGISTERED = "eco_thermostat_services_registered"
+
+
+@callback
+def _async_register_services(hass: HomeAssistant, platform: entity_platform.EntityPlatform) -> None:
+    """Register platform entity services once."""
+    if hass.data.get(_SERVICES_REGISTERED):
+        return
+
     platform.async_register_entity_service(
         "set_hvac_state",
         {
@@ -192,7 +204,6 @@ async def async_setup_platform(
         },
         "async_set_hvac_state",
     )
-
     platform.async_register_entity_service(
         "set_timer_duration",
         {
@@ -200,68 +211,150 @@ async def async_setup_platform(
         },
         "async_set_timer_duration",
     )
+    hass.data[_SERVICES_REGISTERED] = True
 
-    name = config.get(CONF_NAME)
+
+def _create_eco_thermostat(
+    hass: HomeAssistant,
+    config: dict[str, Any],
+    unique_id: str | None = None,
+) -> EcoThermostat:
+    """Create an EcoThermostat instance from a configuration dictionary."""
+    name = config.get(CONF_NAME, DEFAULT_NAME)
     heater_entity_id = config.get(CONF_HEATER)
     sensor_entity_id = config.get(CONF_SENSOR)
     min_temp = config.get(CONF_MIN_TEMP)
     max_temp = config.get(CONF_MAX_TEMP)
     target_temp = config.get(CONF_TARGET_TEMP)
-    ac_mode = config.get(CONF_AC_MODE)
-    min_cycle_duration = config.get(CONF_MIN_DUR)
-    cold_tolerance = config.get(CONF_COLD_TOLERANCE)
-    hot_tolerance = config.get(CONF_HOT_TOLERANCE)
-    keep_alive = config.get(CONF_KEEP_ALIVE)
+    ac_mode = config.get(CONF_AC_MODE, False)
+    min_cycle_duration = _parse_duration(config.get(CONF_MIN_DUR))
+    cold_tolerance = config.get(CONF_COLD_TOLERANCE, DEFAULT_TOLERANCE)
+    hot_tolerance = config.get(CONF_HOT_TOLERANCE, DEFAULT_TOLERANCE)
+    keep_alive = _parse_duration(config.get(CONF_KEEP_ALIVE))
     initial_hvac_mode = config.get(CONF_INITIAL_HVAC_MODE)
     presets = {
-        key: config[value] for key, value in CONF_PRESETS.items() if value in config
+        key: float(config[value])
+        for key, value in CONF_PRESETS.items()
+        if value in config and config[value] is not None
     }
-    precision = config.get(CONF_PRECISION)
-    target_temperature_step = config.get(CONF_TEMP_STEP)
+    precision = (
+        float(config[CONF_PRECISION])
+        if config.get(CONF_PRECISION) is not None
+        else None
+    )
+    target_temperature_step = (
+        float(config[CONF_TEMP_STEP])
+        if config.get(CONF_TEMP_STEP) is not None
+        else None
+    )
     unit = hass.config.units.temperature_unit
-    unique_id = config.get(CONF_UNIQUE_ID)
+    unique_id = unique_id or config.get(CONF_UNIQUE_ID)
 
-    # new fields
-    min_hot_tolerance = config.get(CONF_MIN_HOT_TOLERANCE)
-    max_temp_jumps = config.get(CONF_MAX_TEMP_JUMPS)
-    max_heating_locked = config.get(CONF_MAX_HEATING_LOCKED)
+    min_hot_tolerance = config.get(CONF_MIN_HOT_TOLERANCE, DEFAULT_TOLERANCE)
+    max_temp_jumps = config.get(CONF_MAX_TEMP_JUMPS) or []
+    max_heating_locked = _parse_duration(config.get(CONF_MAX_HEATING_LOCKED))
     manual_timer = config.get(CONF_MANUAL_TIMER)
     calendar_holidays = config.get(CONF_CALENDAR_HOLIDAYS)
-    schedule_temp = config.get(CONF_SCHEDULE_TEMP)
-    schedule_temp_holidays = config.get(CONF_SCHEDULE_TEMP_HOLIDAY)
-    max_time_on = config.get(CONF_MAX_TIME_ON)
+    schedule_temp = config.get(CONF_SCHEDULE_TEMP) or []
+    schedule_temp_holidays = config.get(CONF_SCHEDULE_TEMP_HOLIDAY) or []
+    max_time_on = _parse_duration(config.get(CONF_MAX_TIME_ON))
 
-    async_add_entities(
-        [
-            EcoThermostat(
-                name,
-                heater_entity_id,
-                sensor_entity_id,
-                min_temp,
-                max_temp,
-                target_temp,
-                ac_mode,
-                min_cycle_duration,
-                cold_tolerance,
-                hot_tolerance,
-                keep_alive,
-                initial_hvac_mode,
-                presets,
-                precision,
-                target_temperature_step,
-                unit,
-                unique_id,
-                min_hot_tolerance,
-                max_temp_jumps,
-                max_heating_locked,
-                manual_timer,
-                calendar_holidays,
-                schedule_temp,
-                schedule_temp_holidays,
-                max_time_on,
-            )
-        ]
+    return EcoThermostat(
+        name,
+        heater_entity_id,
+        sensor_entity_id,
+        min_temp,
+        max_temp,
+        target_temp,
+        ac_mode,
+        min_cycle_duration,
+        cold_tolerance,
+        hot_tolerance,
+        keep_alive,
+        initial_hvac_mode,
+        presets,
+        precision,
+        target_temperature_step,
+        unit,
+        unique_id,
+        min_hot_tolerance,
+        max_temp_jumps,
+        max_heating_locked,
+        manual_timer,
+        calendar_holidays,
+        schedule_temp,
+        schedule_temp_holidays,
+        max_time_on,
     )
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up Eco Thermostat from a config entry."""
+    platform = entity_platform.async_get_current_platform()
+    _async_register_services(hass, platform)
+
+    config = {**entry.data, **entry.options}
+    unique_id = entry.unique_id or entry.entry_id
+    thermostat = _create_eco_thermostat(hass, config, unique_id=unique_id)
+    async_add_entities([thermostat])
+
+
+async def async_setup_platform(
+    hass: HomeAssistant,
+    config: ConfigType,
+    async_add_entities: AddEntitiesCallback,
+    discovery_info: DiscoveryInfoType | None = None,
+) -> None:
+    """Set up the eco thermostat platform from YAML."""
+    await async_setup_reload_service(hass, DOMAIN, PLATFORMS)
+
+    unique_id = config.get(CONF_UNIQUE_ID)
+    if not unique_id:
+        unique_id = f"eco_{config[CONF_HEATER]}_{config[CONF_SENSOR]}"
+
+    # Check if a config entry already exists for this unique_id
+    existing_entries = hass.config_entries.async_entries(DOMAIN)
+    if any(entry.unique_id == unique_id for entry in existing_entries):
+        _LOGGER.debug(
+            "Eco Thermostat entity '%s' (unique_id: %s) is already configured via UI. Skipping YAML setup.",
+            config.get(CONF_NAME),
+            unique_id,
+        )
+        return
+
+    _LOGGER.warning(
+        "Configuring Eco Thermostat via YAML is deprecated and will be removed in a future version. "
+        "Your configuration for '%s' (unique_id: %s) has been automatically imported into Home Assistant "
+        "(Settings -> Devices & Services). You can safely remove it from your YAML configuration files.",
+        config.get(CONF_NAME, DEFAULT_NAME),
+        unique_id,
+    )
+
+    import_data = dict(config)
+    import_data[CONF_UNIQUE_ID] = unique_id
+
+    import_success = False
+    try:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": SOURCE_IMPORT},
+            data=import_data,
+        )
+        if result and result.get("type") == "create_entry":
+            import_success = True
+    except Exception as err:
+        _LOGGER.debug("YAML import failed for %s: %s", unique_id, err)
+
+    # If import didn't immediately create an active entry, ensure entity is loaded directly from YAML
+    if not import_success:
+        platform = entity_platform.async_get_current_platform()
+        _async_register_services(hass, platform)
+        thermostat = _create_eco_thermostat(hass, config, unique_id=unique_id)
+        async_add_entities([thermostat])
 
 
 class EcoThermostat(ClimateEntity, RestoreEntity):

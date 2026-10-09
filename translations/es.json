@@ -1,0 +1,95 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Eco Thermostat",
+        "description": "Configura los parámetros principales del termostato.",
+        "data": {
+          "name": "Nombre",
+          "heater": "Interruptor o input_boolean de la caldera",
+          "target_sensor": "Sensor de temperatura ambiente",
+          "ac_mode": "Modo refrigeración (A/C)",
+          "min_temp": "Temperatura mínima permitida",
+          "max_temp": "Temperatura máxima permitida",
+          "cold_tolerance": "Tolerancia por frío (diferencial inferior)",
+          "hot_tolerance": "Tolerancia por calor (diferencial superior)",
+          "target_temp_step": "Paso de ajuste de temperatura",
+          "precision": "Precisión de visualización",
+          "initial_hvac_mode": "Modo HVAC inicial tras arranque"
+        }
+      },
+      "presets": {
+        "title": "Preajustes de temperatura",
+        "description": "Configura las temperaturas objetivo para cada modo predefinido.",
+        "data": {
+          "away_temp": "Temperatura modo Ausente (Away)",
+          "comfort_temp": "Temperatura modo Confort (Comfort)",
+          "home_temp": "Temperatura modo En Casa (Home)",
+          "sleep_temp": "Temperatura modo Noche (Sleep)"
+        }
+      },
+      "eco_settings": {
+        "title": "Ajustes Eco y Horarios",
+        "description": "Configura temporizadores de seguridad, calendario de festivos y horarios dinámicos.",
+        "data": {
+          "manual_timer": "Entidad del temporizador manual (timer)",
+          "calendar_holidays": "Calendario de festivos (calendar)",
+          "min_cycle_duration": "Duración mínima del ciclo",
+          "max_time_on": "Tiempo máximo consecutivo encendido",
+          "max_heating_locked": "Tiempo de bloqueo de calefacción tras ciclo",
+          "min_hot_tolerance": "Tolerancia mínima de calor",
+          "max_temp_jumps": "Saltos y tolerancias de temperatura (YAML)",
+          "schedule_temp": "Programación semanal de temperaturas (YAML)",
+          "schedule_temp_holidays": "Programación de festivos (YAML)"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Este dispositivo o termostato ya está configurado"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Ajustes de Eco Thermostat",
+        "description": "Actualiza el sensor, interruptor y tolerancias.",
+        "data": {
+          "heater": "Interruptor o input_boolean de la caldera",
+          "target_sensor": "Sensor de temperatura ambiente",
+          "ac_mode": "Modo refrigeración (A/C)",
+          "min_temp": "Temperatura mínima permitida",
+          "max_temp": "Temperatura máxima permitida",
+          "cold_tolerance": "Tolerancia por frío (diferencial inferior)",
+          "hot_tolerance": "Tolerancia por calor (diferencial superior)",
+          "target_temp_step": "Paso de ajuste de temperatura",
+          "precision": "Precisión de visualización"
+        }
+      },
+      "presets": {
+        "title": "Preajustes de temperatura",
+        "description": "Configura las temperaturas objetivo para cada modo predefinido.",
+        "data": {
+          "away_temp": "Temperatura modo Ausente (Away)",
+          "comfort_temp": "Temperatura modo Confort (Comfort)",
+          "home_temp": "Temperatura modo En Casa (Home)",
+          "sleep_temp": "Temperatura modo Noche (Sleep)"
+        }
+      },
+      "eco_settings": {
+        "title": "Ajustes Eco y Horarios",
+        "description": "Configura temporizadores de seguridad, calendario de festivos y horarios dinámicos.",
+        "data": {
+          "manual_timer": "Entidad del temporizador manual (timer)",
+          "calendar_holidays": "Calendario de festivos (calendar)",
+          "min_cycle_duration": "Duración mínima del ciclo",
+          "max_time_on": "Tiempo máximo consecutivo encendido",
+          "max_heating_locked": "Tiempo de bloqueo de calefacción tras ciclo",
+          "min_hot_tolerance": "Tolerancia mínima de calor",
+          "max_temp_jumps": "Saltos y tolerancias de temperatura (YAML)",
+          "schedule_temp": "Programación semanal de temperaturas (YAML)",
+          "schedule_temp_holidays": "Programación de festivos (YAML)"
+        }
+      }
+    }
+  }
+}
