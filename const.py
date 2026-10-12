@@ -8,8 +8,10 @@ from homeassistant.components.climate import (
     PRESET_HOME,
     PRESET_SLEEP,
 )
+from homeassistant.const import Platform
 
 DOMAIN = "eco_thermostat"
+PLATFORMS: list[Platform] = [Platform.CLIMATE, Platform.NUMBER, Platform.SENSOR]
 
 DEFAULT_TOLERANCE = 0.3
 DEFAULT_NAME = "Eco Thermostat"

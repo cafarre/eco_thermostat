@@ -5,7 +5,7 @@ import asyncio
 from datetime import datetime, time as time_sys, timedelta
 import logging
 import math
-from typing import Any
+from typing import Any, Callable
 
 import voluptuous as vol
 
@@ -45,8 +45,10 @@ from homeassistant.core import DOMAIN as HA_DOMAIN, CoreState, HomeAssistant, ca
 from homeassistant.exceptions import ConditionError
 from homeassistant.helpers import condition, entity_platform
 import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import (
+    async_call_later,
     async_track_state_change_event,
     async_track_time_interval,
 )
@@ -214,7 +216,7 @@ def _async_register_services(hass: HomeAssistant, platform: entity_platform.Enti
     hass.data[_SERVICES_REGISTERED] = True
 
 
-def _create_eco_thermostat(
+def create_eco_thermostat(
     hass: HomeAssistant,
     config: dict[str, Any],
     unique_id: str | None = None,
@@ -288,6 +290,9 @@ def _create_eco_thermostat(
     )
 
 
+_create_eco_thermostat = create_eco_thermostat
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -297,9 +302,13 @@ async def async_setup_entry(
     platform = entity_platform.async_get_current_platform()
     _async_register_services(hass, platform)
 
-    config = {**entry.data, **entry.options}
-    unique_id = entry.unique_id or entry.entry_id
-    thermostat = _create_eco_thermostat(hass, config, unique_id=unique_id)
+    thermostat = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if thermostat is None:
+        config = {**entry.data, **entry.options}
+        unique_id = entry.unique_id or entry.entry_id
+        thermostat = create_eco_thermostat(hass, config, unique_id=unique_id)
+        hass.data.setdefault(DOMAIN, {})[entry.entry_id] = thermostat
+
     async_add_entities([thermostat])
 
 
@@ -437,6 +446,11 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
         self._max_heating_locked = max_heating_locked
         self._hvac_state = HVACState.AUTO
         self._timer_duration = None
+        self._manual_duration_minutes = 30
+        self._manual_timer_end: datetime | None = None
+        self._manual_remaining_seconds: float = 0.0
+        self._unsub_manual_timer = None
+        self._timer_update_callbacks: list[Callable[[], None]] = []
         self._hvac_state_before = None
         self._hvac_mode_before = None
         self._manual_timer = manual_timer
@@ -660,11 +674,60 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
         # Ensure we update the current operation after changing the mode
         self.async_write_ha_state()
 
+    @property
+    def manual_duration_minutes(self) -> int:
+        """Return manual duration in minutes."""
+        return self._manual_duration_minutes
+
+    @property
+    def manual_timer_end(self) -> datetime | None:
+        """Return manual timer end datetime."""
+        return self._manual_timer_end
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._attr_unique_id or self.name)},
+            name=self._attr_name,
+            manufacturer="Eco Thermostat",
+            model="Virtual Thermostat",
+        )
+
+    def register_timer_update_callback(self, callback: Callable[[], None]) -> Callable[[], None]:
+        """Register callback for timer/duration updates."""
+        self._timer_update_callbacks.append(callback)
+        def _unregister():
+            if callback in self._timer_update_callbacks:
+                self._timer_update_callbacks.remove(callback)
+        return _unregister
+
+    def _async_notify_listeners(self) -> None:
+        """Notify listeners of timer updates."""
+        for cb in self._timer_update_callbacks:
+            try:
+                cb()
+            except Exception as err:
+                _LOGGER.error("Error in timer update callback: %s", err)
+
+    def _cancel_internal_timer(self) -> None:
+        """Cancel active internal timer callback."""
+        if self._unsub_manual_timer is not None:
+            self._unsub_manual_timer()
+            self._unsub_manual_timer = None
+
+    async def async_set_manual_duration_minutes(self, minutes: int) -> None:
+        """Set manual duration in minutes."""
+        self._manual_duration_minutes = max(1, int(minutes))
+        self._timer_duration = _format_timedelta(timedelta(minutes=self._manual_duration_minutes))
+        self._async_notify_listeners()
+        self.async_write_ha_state()
+        _LOGGER.info("EcoThermostat %s manual duration set to %d min (%s)", self.entity_id or self.name, self._manual_duration_minutes, self._timer_duration)
+
     async def async_set_timer_duration(self, duration: timedelta):
         """Set Timer Duration SERVICE."""
-        self._timer_duration = _format_timedelta(duration)
-        self.async_write_ha_state()
-        _LOGGER.info("OK Service Set Timer Duration to: %s", self._timer_duration)
+        minutes = int(duration.total_seconds() // 60)
+        await self.async_set_manual_duration_minutes(minutes)
 
     async def async_set_hvac_state(self, hvac_state: HVACState):
         """Set HVAC state SERVICE."""
@@ -673,7 +736,7 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
         if newstate == oldstate:
             return
 
-        timer_state = self.hass.states.get(self._manual_timer)
+        timer_state = self.hass.states.get(self._manual_timer) if self._manual_timer else None
 
         if self._target_temp_before is None:
             self._target_temp_before = self._target_temp
@@ -691,8 +754,33 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
                 await self._async_set_temperature(self._target_temp_before)
                 self._target_temp_before = None
 
-            if timer_state.state != STATUS_ACTIVE:
+            # Internal countdown logic
+            if oldstate == HVACState.WINDOW_OPEN and self._manual_remaining_seconds > 0:
+                self._manual_timer_end = dt_util.utcnow() + timedelta(seconds=self._manual_remaining_seconds)
+            else:
+                self._manual_remaining_seconds = float(self._manual_duration_minutes * 60)
+                self._manual_timer_end = dt_util.utcnow() + timedelta(seconds=self._manual_remaining_seconds)
+
+            self._cancel_internal_timer()
+
+            @callback
+            def _timer_expired(_=None):
+                self._unsub_manual_timer = None
+                self._manual_timer_end = None
+                self._manual_remaining_seconds = 0.0
+                _LOGGER.info("EcoThermostat %s manual timer expired. Returning to AUTO", self.entity_id or self.name)
+                self.hass.create_task(self.async_set_hvac_state(HVACState.AUTO))
+
+            self._unsub_manual_timer = async_call_later(
+                self.hass,
+                self._manual_remaining_seconds,
+                _timer_expired,
+            )
+
+            if timer_state and timer_state.state != STATUS_ACTIVE:
                 await self._async_manual_timer_start()
+
+            self._async_notify_listeners()
 
         elif newstate == HVACState.AUTO:
             self._hvac_state_before = None
@@ -703,16 +791,32 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
             else:
                 self._target_temp_before = None
 
-            if timer_state.state != STATUS_IDLE:
+            self._cancel_internal_timer()
+            self._manual_timer_end = None
+            self._manual_remaining_seconds = 0.0
+
+            if timer_state and timer_state.state != STATUS_IDLE:
                 await self._async_manual_timer_cancel()
+
+            await self._async_control_schedules()
+            self._async_notify_listeners()
 
         elif newstate == HVACState.WINDOW_OPEN:
             self._hvac_mode_before = self._hvac_mode
             self._hvac_state_before = oldstate
             self._target_temp_before = self._target_temp
             await self.async_set_hvac_mode(HVACMode.OFF)
-            if timer_state.state == STATUS_ACTIVE:
+
+            if self._manual_timer_end is not None:
+                remaining = (self._manual_timer_end - dt_util.utcnow()).total_seconds()
+                self._manual_remaining_seconds = max(0.0, remaining)
+            self._cancel_internal_timer()
+            self._manual_timer_end = None
+
+            if timer_state and timer_state.state == STATUS_ACTIVE:
                 await self._async_manual_timer_pause()
+
+            self._async_notify_listeners()
 
         elif newstate == HVACState.HOME_CLOSED:
             self._hvac_mode_before = self._hvac_mode
@@ -720,12 +824,24 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
             self._target_temp_before = self._target_temp
             temp_away = self._presets[PRESET_AWAY]
             await self._async_set_temperature(temp_away)
-            if timer_state.state != STATUS_IDLE:
+
+            self._cancel_internal_timer()
+            self._manual_timer_end = None
+            self._manual_remaining_seconds = 0.0
+
+            if timer_state and timer_state.state != STATUS_IDLE:
                 await self._async_manual_timer_cancel()
+
+            self._async_notify_listeners()
 
         await self._async_control_heating(force=True)
         self.async_write_ha_state()
         _LOGGER.info("OK Service Set HVAC State to: %s", self._hvac_state)
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Run when entity will be removed from hass."""
+        self._cancel_internal_timer()
+        await super().async_will_remove_from_hass()
 
     async def async_turn_on(self) -> None:
         """Turn the entity on."""
@@ -986,6 +1102,17 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
             timer_state = self.hass.states.get(self._manual_timer)
             if timer_state is not None:
                 self._timer_duration = timer_state.attributes.get(ATTR_DURATION)
+        if self._timer_duration is not None:
+            try:
+                parts = str(self._timer_duration).split(":")
+                if len(parts) == 3:
+                    self._manual_duration_minutes = int(parts[0]) * 60 + int(parts[1])
+                elif len(parts) == 2:
+                    self._manual_duration_minutes = int(parts[0]) * 60 + int(parts[1])
+            except Exception:
+                pass
+        elif self._manual_duration_minutes:
+            self._timer_duration = _format_timedelta(timedelta(minutes=self._manual_duration_minutes))
 
     def _hot_tolerance_update(self):
         """Update hot tolerance based on max_temp_jumps."""
@@ -1190,12 +1317,18 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
         if self._max_heating_locked is not None:
             _max_heating_locked = _format_timedelta(self._max_heating_locked)
 
+        timer_finishes_at = (
+            self._manual_timer_end.isoformat() if self._manual_timer_end is not None else None
+        )
         return {
             "hot_tolerance": self._hot_tolerance,
             "cold_tolerance": self._cold_tolerance,
             "heating_locked_since": heating_locked_since,
             "hvac_state": self._hvac_state,
             "timer_duration": self._timer_duration,
+            "timer_finishes_at": timer_finishes_at,
+            "manual_duration_minutes": self._manual_duration_minutes,
+            "timer_remaining_seconds": int(self._manual_remaining_seconds) if self._manual_timer_end else 0,
             "is_week_holiday": self._attr_is_week_holiday,
             "is_calendar_holiday": self._attr_is_calendar_holiday,
             "is_holiday": self._attr_is_holiday,
