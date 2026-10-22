@@ -11,6 +11,7 @@
           "ac_mode": "Modo refrigeración (A/C)",
           "min_temp": "Temperatura mínima permitida",
           "max_temp": "Temperatura máxima permitida",
+          "target_temp": "Temperatura objetivo inicial",
           "cold_tolerance": "Tolerancia por frío (diferencial inferior)",
           "hot_tolerance": "Tolerancia por calor (diferencial superior)",
           "target_temp_step": "Paso de ajuste de temperatura",
@@ -59,10 +60,12 @@
           "ac_mode": "Modo refrigeración (A/C)",
           "min_temp": "Temperatura mínima permitida",
           "max_temp": "Temperatura máxima permitida",
+          "target_temp": "Temperatura objetivo inicial",
           "cold_tolerance": "Tolerancia por frío (diferencial inferior)",
           "hot_tolerance": "Tolerancia por calor (diferencial superior)",
           "target_temp_step": "Paso de ajuste de temperatura",
-          "precision": "Precisión de visualización"
+          "precision": "Precisión de visualización",
+          "initial_hvac_mode": "Modo HVAC inicial tras arranque"
         }
       },
       "presets": {

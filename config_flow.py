@@ -42,6 +42,7 @@ from .const import (
     CONF_SCHEDULE_TEMP,
     CONF_SCHEDULE_TEMP_HOLIDAY,
     CONF_SENSOR,
+    CONF_TARGET_TEMP,
     CONF_TARGET_TEMP_STEP,
     DEFAULT_NAME,
     DEFAULT_TOLERANCE,
@@ -116,6 +117,11 @@ class EcoThermostatConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
                 ),
                 vol.Optional(CONF_MAX_TEMP, default=25.0): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=0.0, max=50.0, step=0.5, mode=selector.NumberSelectorMode.BOX
+                    )
+                ),
+                vol.Optional(CONF_TARGET_TEMP, default=19.0): selector.NumberSelector(
                     selector.NumberSelectorConfig(
                         min=0.0, max=50.0, step=0.5, mode=selector.NumberSelectorMode.BOX
                     )
@@ -325,6 +331,14 @@ class EcoThermostatOptionsFlowHandler(config_entries.OptionsFlow):
                     )
                 ),
                 vol.Optional(
+                    CONF_TARGET_TEMP,
+                    default=float(self._get_val(CONF_TARGET_TEMP, 19.0)),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=0.0, max=50.0, step=0.5, mode=selector.NumberSelectorMode.BOX
+                    )
+                ),
+                vol.Optional(
                     CONF_COLD_TOLERANCE,
                     default=self._get_val(CONF_COLD_TOLERANCE, DEFAULT_TOLERANCE),
                 ): selector.NumberSelector(
@@ -355,6 +369,16 @@ class EcoThermostatOptionsFlowHandler(config_entries.OptionsFlow):
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=PRECISION_OPTIONS,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Optional(
+                    CONF_INITIAL_HVAC_MODE,
+                    default=self._get_val(CONF_INITIAL_HVAC_MODE, HVACMode.OFF.value)
+                    or HVACMode.OFF.value,
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=HVAC_MODE_OPTIONS,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),

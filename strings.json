@@ -11,6 +11,7 @@
           "ac_mode": "Cooling mode (A/C)",
           "min_temp": "Minimum temperature",
           "max_temp": "Maximum temperature",
+          "target_temp": "Target temperature",
           "cold_tolerance": "Cold tolerance",
           "hot_tolerance": "Hot tolerance",
           "target_temp_step": "Target temperature step",
@@ -59,10 +60,12 @@
           "ac_mode": "Cooling mode (A/C)",
           "min_temp": "Minimum temperature",
           "max_temp": "Maximum temperature",
+          "target_temp": "Target temperature",
           "cold_tolerance": "Cold tolerance",
           "hot_tolerance": "Hot tolerance",
           "target_temp_step": "Target temperature step",
-          "precision": "Display precision"
+          "precision": "Display precision",
+          "initial_hvac_mode": "Initial HVAC mode"
         }
       },
       "presets": {
