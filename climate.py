@@ -25,7 +25,11 @@ from homeassistant.components.climate import (
     HVACAction,
     HVACMode,
 )
-from homeassistant.components.timer import ATTR_DURATION, STATUS_ACTIVE, STATUS_IDLE
+try:
+    from homeassistant.components.timer import STATUS_ACTIVE, STATUS_IDLE
+except ImportError:
+    STATUS_ACTIVE = "active"
+    STATUS_IDLE = "idle"
 from homeassistant.const import (
     ATTR_ENTITY_ID,
     ATTR_TEMPERATURE,
@@ -85,6 +89,7 @@ CONF_MAX_TEMP_JUMPS = "max_temp_jumps"
 CONF_MAX_HEATING_LOCKED = "max_heating_locked"
 CONF_MANUAL_TIMER = "manual_timer"
 ATTR_HVAC_STATE = "hvac_state"
+ATTR_DURATION = "duration"
 CONF_CALENDAR_HOLIDAYS = "calendar_holidays"
 CONF_SCHEDULE_TEMP = "schedule_temp"
 CONF_SCHEDULE_TEMP_HOLIDAY = "schedule_temp_holidays"
