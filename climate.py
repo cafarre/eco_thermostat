@@ -41,6 +41,7 @@ from homeassistant.const import (
     PRECISION_WHOLE,
     SERVICE_TURN_OFF,
     SERVICE_TURN_ON,
+    STATE_OFF,
     STATE_ON,
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
@@ -66,6 +67,8 @@ from .const import (
     ATTR_HVAC_STATE,
     ATTR_HVAC_STATE_PREVIOUS,
     CONF_WINDOW_SENSOR,
+    DEFAULT_DOOR_OPEN_DELAY_SECONDS,
+    DEFAULT_WINDOW_OPEN_DELAY_SECONDS,
     HVACState,
     VALID_PREVIOUS_HVAC_STATES,
 )
@@ -463,6 +466,8 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
         self._hvac_state = HVACState.AUTO
         self._hvac_state_previous = HVACState.AUTO
         self._window_sensor = window_sensor
+        self._child_window_sensors: list[str] = []
+        self._pending_open_timers: dict[str, Callable[[], None]] = {}
         self._unsub_waiting_temp = None
         self._timer_duration = None
         self._manual_duration_minutes = 30
@@ -531,9 +536,11 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
             )
 
         if self._window_sensor:
+            self._child_window_sensors = self._get_associated_window_entities()
+            all_sensors = list(dict.fromkeys([self._window_sensor, *self._child_window_sensors]))
             self.async_on_remove(
                 async_track_state_change_event(
-                    self.hass, [self._window_sensor], self._async_window_sensor_changed
+                    self.hass, all_sensors, self._async_window_sensor_changed
                 )
             )
 
@@ -556,6 +563,14 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
                 self.hass.create_task(self._check_switch_initial_state())
 
             if self._window_sensor:
+                new_children = self._get_associated_window_entities()
+                if new_children and new_children != self._child_window_sensors:
+                    self._child_window_sensors = new_children
+                    self.async_on_remove(
+                        async_track_state_change_event(
+                            self.hass, self._child_window_sensors, self._async_window_sensor_changed
+                        )
+                    )
                 self.hass.create_task(self._check_window_initial_state())
 
         if self.hass.state == CoreState.running:
@@ -818,12 +833,43 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
             self._unsub_waiting_temp()
             self._unsub_waiting_temp = None
 
+    def _get_associated_window_entities(self) -> list[str]:
+        """Get child entity_ids from the configured window binary_sensor if it is a group."""
+        if not self._window_sensor:
+            return []
+        st = self.hass.states.get(self._window_sensor)
+        if st and (eids := st.attributes.get(ATTR_ENTITY_ID)):
+            if isinstance(eids, (list, tuple, set)):
+                return [str(e) for e in eids]
+            if isinstance(eids, str):
+                return [e.strip() for e in eids.split(",") if e.strip()]
+        return []
+
+    def _get_entity_open_delay(self, entity_id: str) -> int:
+        """Return the delay in seconds according to whether the entity is a door (30s) or window (5s)."""
+        search_text = entity_id.lower()
+        st = self.hass.states.get(entity_id)
+        if st and (fname := st.attributes.get("friendly_name")):
+            search_text += f" {str(fname).lower()}"
+
+        if "puerta" in search_text:
+            return DEFAULT_DOOR_OPEN_DELAY_SECONDS
+        return DEFAULT_WINDOW_OPEN_DELAY_SECONDS
+
+    def _cancel_all_pending_open_timers(self) -> None:
+        """Cancel all pending open grace timers."""
+        for unsub in self._pending_open_timers.values():
+            unsub()
+        self._pending_open_timers.clear()
+
     async def async_set_hvac_state(self, hvac_state: HVACState):
         """Set HVAC state SERVICE."""
         newstate = hvac_state
         oldstate = self._hvac_state
         if newstate == oldstate:
             return
+
+        self._cancel_all_pending_open_timers()
 
         timer_state = self.hass.states.get(self._manual_timer) if self._manual_timer else None
 
@@ -955,15 +1001,91 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
         _LOGGER.info("OK Service Set HVAC State to: %s", self._hvac_state)
 
     async def _async_window_sensor_changed(self, event):
-        """Handle window binary_sensor state changes."""
+        """Handle window/door binary_sensor state changes."""
+        entity_id = event.data.get("entity_id")
         new_state = event.data.get("new_state")
         if new_state is None or new_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
             return
 
-        if new_state.state == STATE_ON:
-            await self._async_handle_window_open()
-        elif new_state.state == STATE_OFF:
-            await self._async_handle_window_closed()
+        if not self._child_window_sensors:
+            self._child_window_sensors = self._get_associated_window_entities()
+
+        if new_state.state in (STATE_ON, "on"):
+            if self._hvac_state == HVACState.WINDOW_OPEN:
+                return
+
+            target_entity = entity_id or self._window_sensor
+            if entity_id == self._window_sensor and self._child_window_sensors:
+                on_children = [
+                    cid for cid in self._child_window_sensors
+                    if self.hass.states.is_state(cid, STATE_ON)
+                ]
+                if on_children:
+                    target_entity = on_children[-1]
+
+            if unsub := self._pending_open_timers.pop(target_entity, None):
+                unsub()
+
+            delay = self._get_entity_open_delay(target_entity)
+
+            @callback
+            def _open_delay_expired(_=None):
+                self._pending_open_timers.pop(target_entity, None)
+                is_still_on = self.hass.states.is_state(target_entity, STATE_ON) or (
+                    self._window_sensor and self.hass.states.is_state(self._window_sensor, STATE_ON)
+                )
+                if is_still_on:
+                    _LOGGER.info(
+                        "EcoThermostat %s: Grace period (%ds) expired for %s. Setting state to WINDOW_OPEN",
+                        self.entity_id or self.name,
+                        delay,
+                        target_entity,
+                    )
+                    self._cancel_all_pending_open_timers()
+                    self.hass.create_task(self.async_set_hvac_state(HVACState.WINDOW_OPEN))
+
+            self._pending_open_timers[target_entity] = async_call_later(
+                self.hass,
+                delay,
+                _open_delay_expired,
+            )
+            _LOGGER.info(
+                "EcoThermostat %s: Opened %s (delay: %ds). Grace timer started.",
+                self.entity_id or self.name,
+                target_entity,
+                delay,
+            )
+
+        elif new_state.state in (STATE_OFF, "off"):
+            if entity_id and (unsub := self._pending_open_timers.pop(entity_id, None)):
+                unsub()
+                _LOGGER.info(
+                    "EcoThermostat %s: %s closed before grace timer expired. Cancelled timer.",
+                    self.entity_id or self.name,
+                    entity_id,
+                )
+
+            if entity_id == self._window_sensor:
+                self._cancel_all_pending_open_timers()
+
+            if self._hvac_state == HVACState.WINDOW_OPEN:
+                all_eids = self._child_window_sensors or [self._window_sensor]
+                any_open = any(self.hass.states.is_state(eid, STATE_ON) for eid in all_eids if eid)
+                if self._window_sensor and self.hass.states.is_state(self._window_sensor, STATE_ON):
+                    any_open = True
+
+                if not any_open:
+                    _LOGGER.info(
+                        "EcoThermostat %s: All window/door sensors closed. Executing recovery.",
+                        self.entity_id or self.name,
+                    )
+                    await self._async_handle_window_closed()
+                else:
+                    _LOGGER.info(
+                        "EcoThermostat %s: %s closed, but other window/door sensors remain open.",
+                        self.entity_id or self.name,
+                        entity_id,
+                    )
 
     async def _async_handle_window_open(self):
         """Handle window opened event."""
@@ -974,6 +1096,7 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
             "EcoThermostat %s: Window opened. Setting state to WINDOW_OPEN",
             self.entity_id or self.name,
         )
+        self._cancel_all_pending_open_timers()
         self._cancel_waiting_temp_timer()
 
         if self._hvac_state in VALID_PREVIOUS_HVAC_STATES:
@@ -990,6 +1113,7 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
 
     async def _async_handle_window_closed(self):
         """Handle window closed event."""
+        self._cancel_all_pending_open_timers()
         if self._hvac_state != HVACState.WINDOW_OPEN:
             return
 
@@ -1042,6 +1166,7 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
 
     async def _async_restore_previous_state(self):
         """Restore HVACState from HVACStatePrevious."""
+        self._cancel_all_pending_open_timers()
         self._cancel_waiting_temp_timer()
 
         target_state = self._hvac_state_previous
@@ -1075,11 +1200,14 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
                 await self._async_restore_previous_state()
             return
 
-        win_state = self.hass.states.get(self._window_sensor)
-        if win_state is None or win_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
-            return
+        self._child_window_sensors = self._get_associated_window_entities()
 
-        if win_state.state == STATE_ON:
+        all_eids = self._child_window_sensors or [self._window_sensor]
+        any_open = any(self.hass.states.is_state(eid, STATE_ON) for eid in all_eids if eid)
+        if self._window_sensor and self.hass.states.is_state(self._window_sensor, STATE_ON):
+            any_open = True
+
+        if any_open:
             if self._hvac_state != HVACState.WINDOW_OPEN:
                 if self._hvac_state in VALID_PREVIOUS_HVAC_STATES:
                     self._hvac_state_previous = self._hvac_state
@@ -1089,7 +1217,7 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
                 await self._async_heater_turn_off()
             self._async_notify_listeners()
             self.async_write_ha_state()
-        elif win_state.state == STATE_OFF:
+        else:
             if self._hvac_state == HVACState.WINDOW_OPEN:
                 await self._async_handle_window_closed()
             elif self._hvac_state == HVACState.WAITING_TEMP:
@@ -1121,6 +1249,7 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
         """Run when entity will be removed from hass."""
         self._cancel_internal_timer()
         self._cancel_waiting_temp_timer()
+        self._cancel_all_pending_open_timers()
         await super().async_will_remove_from_hass()
 
     async def async_turn_on(self) -> None:

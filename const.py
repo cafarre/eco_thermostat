@@ -46,6 +46,9 @@ CONF_SCHEDULE_TEMP = "schedule_temp"
 CONF_SCHEDULE_TEMP_HOLIDAY = "schedule_temp_holidays"
 CONF_MAX_TIME_ON = "max_time_on"
 
+DEFAULT_WINDOW_OPEN_DELAY_SECONDS = 5
+DEFAULT_DOOR_OPEN_DELAY_SECONDS = 30
+
 CONF_PRESETS = {
     p: f"{p}_temp"
     for p in (

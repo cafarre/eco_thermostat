@@ -4,7 +4,7 @@ Cuando el usuario solicite desplegar o actualizar el componente `eco_thermostat`
 
 ## 1. Rutas de Despliegue
 - **Origen (Workspace local):** `d:\GitRepos\home-assistant\eco_thermostat`
-- **Destino (Samba Share HA OS):** `\\vmhaos\config\custom_components\eco_thermostat`
+- **Destino (Samba Share HA OS):** `\\10.0.0.20\config\custom_components\eco_thermostat` (o `\\vmhaos\config\custom_components\eco_thermostat`)
 
 ## 2. Archivos a Sincronizar
 Copiar desde el origen hacia el destino los archivos y carpetas del componente:
