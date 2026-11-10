@@ -34,6 +34,7 @@
         "description": "Configura temporizadores de seguridad, calendario de festivos y horarios dinámicos.",
         "data": {
           "manual_timer": "Entidad del temporizador manual (timer)",
+          "window_sensor": "Sensor de ventana (binary_sensor)",
           "calendar_holidays": "Calendario de festivos (calendar)",
           "min_cycle_duration": "Duración mínima del ciclo",
           "max_time_on": "Tiempo máximo consecutivo encendido",
@@ -83,6 +84,7 @@
         "description": "Configura temporizadores de seguridad, calendario de festivos y horarios dinámicos.",
         "data": {
           "manual_timer": "Entidad del temporizador manual (timer)",
+          "window_sensor": "Sensor de ventana (binary_sensor)",
           "calendar_holidays": "Calendario de festivos (calendar)",
           "min_cycle_duration": "Duración mínima del ciclo",
           "max_time_on": "Tiempo máximo consecutivo encendido",

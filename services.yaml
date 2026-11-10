@@ -21,6 +21,8 @@ set_hvac_state:
               value: "manual"
             - label: "Window Open"
               value: "window-open"
+            - label: "Waiting Temp"
+              value: "waiting-temp"
             - label: "Home Closed"
               value: "home-closed"
 

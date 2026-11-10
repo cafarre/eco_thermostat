@@ -62,7 +62,13 @@ from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 import homeassistant.util.dt as dt_util
 
 from . import DOMAIN, PLATFORMS
-from .const import HVACState
+from .const import (
+    ATTR_HVAC_STATE,
+    ATTR_HVAC_STATE_PREVIOUS,
+    CONF_WINDOW_SENSOR,
+    HVACState,
+    VALID_PREVIOUS_HVAC_STATES,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -88,7 +94,9 @@ CONF_MIN_HOT_TOLERANCE = "min_hot_tolerance"
 CONF_MAX_TEMP_JUMPS = "max_temp_jumps"
 CONF_MAX_HEATING_LOCKED = "max_heating_locked"
 CONF_MANUAL_TIMER = "manual_timer"
+CONF_WINDOW_SENSOR = "window_sensor"
 ATTR_HVAC_STATE = "hvac_state"
+ATTR_HVAC_STATE_PREVIOUS = "hvac_state_previous"
 ATTR_DURATION = "duration"
 CONF_CALENDAR_HOLIDAYS = "calendar_holidays"
 CONF_SCHEDULE_TEMP = "schedule_temp"
@@ -265,6 +273,7 @@ def create_eco_thermostat(
     schedule_temp = config.get(CONF_SCHEDULE_TEMP) or []
     schedule_temp_holidays = config.get(CONF_SCHEDULE_TEMP_HOLIDAY) or []
     max_time_on = _parse_duration(config.get(CONF_MAX_TIME_ON))
+    window_sensor = config.get(CONF_WINDOW_SENSOR)
 
     return EcoThermostat(
         name,
@@ -292,6 +301,7 @@ def create_eco_thermostat(
         schedule_temp,
         schedule_temp_holidays,
         max_time_on,
+        window_sensor,
     )
 
 
@@ -403,6 +413,7 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
         schedule_temp,
         schedule_temp_holidays,
         max_time_on,
+        window_sensor=None,
     ) -> None:
         """Initialize the thermostat."""
         self._attr_name = name
@@ -450,6 +461,9 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
         self._heating_locked_since = None
         self._max_heating_locked = max_heating_locked
         self._hvac_state = HVACState.AUTO
+        self._hvac_state_previous = HVACState.AUTO
+        self._window_sensor = window_sensor
+        self._unsub_waiting_temp = None
         self._timer_duration = None
         self._manual_duration_minutes = 30
         self._manual_timer_end: datetime | None = None
@@ -516,6 +530,13 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
                 )
             )
 
+        if self._window_sensor:
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self.hass, [self._window_sensor], self._async_window_sensor_changed
+                )
+            )
+
         @callback
         def _async_startup(*_):
             """Init on startup."""
@@ -533,6 +554,9 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
                 STATE_UNKNOWN,
             ):
                 self.hass.create_task(self._check_switch_initial_state())
+
+            if self._window_sensor:
+                self.hass.create_task(self._check_window_initial_state())
 
         if self.hass.state == CoreState.running:
             _async_startup()
@@ -570,8 +594,38 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
                     except ValueError:
                         self._hvac_mode = HVACMode.OFF
 
-            # if old_state.attributes.get(ATTR_HVAC_STATE) is not None:
-            #    self._hvac_state = old_state.attributes.get(ATTR_HVAC_STATE)
+            if (restored_state := old_state.attributes.get(ATTR_HVAC_STATE)) is not None:
+                try:
+                    self._hvac_state = HVACState(restored_state)
+                except ValueError:
+                    self._hvac_state = HVACState.AUTO
+
+            if (restored_prev := old_state.attributes.get(ATTR_HVAC_STATE_PREVIOUS)) is not None:
+                try:
+                    prev_val = HVACState(restored_prev)
+                    if prev_val in VALID_PREVIOUS_HVAC_STATES:
+                        self._hvac_state_previous = prev_val
+                    else:
+                        self._hvac_state_previous = HVACState.AUTO
+                except ValueError:
+                    self._hvac_state_previous = HVACState.AUTO
+            else:
+                if self._hvac_state in VALID_PREVIOUS_HVAC_STATES:
+                    self._hvac_state_previous = self._hvac_state
+                else:
+                    self._hvac_state_previous = HVACState.AUTO
+
+            if (finishes_at := old_state.attributes.get("timer_finishes_at")) is not None:
+                try:
+                    self._manual_timer_end = dt_util.parse_datetime(finishes_at)
+                    if self._manual_timer_end is not None and dt_util.utcnow() >= self._manual_timer_end:
+                        self._manual_timer_end = None
+                        if self._hvac_state == HVACState.MANUAL:
+                            self._hvac_state = HVACState.AUTO
+                        if self._hvac_state_previous == HVACState.MANUAL:
+                            self._hvac_state_previous = HVACState.AUTO
+                except Exception:
+                    self._manual_timer_end = None
 
         else:
             # No previous state, try and restore defaults
@@ -584,8 +638,10 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
                 "No previously saved temperature, setting to %s", self._target_temp
             )
 
-        # Set default state to off
-        if not self._hvac_mode:
+        # Set default mode based on HVAC state
+        if self._hvac_state in (HVACState.AUTO, HVACState.MANUAL):
+            self._hvac_mode = HVACMode.COOL if self.ac_mode else HVACMode.HEAT
+        else:
             self._hvac_mode = HVACMode.OFF
 
         self._heating_locked_since = None
@@ -629,6 +685,16 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
         return self._hvac_state
 
     @property
+    def hvac_state_previous(self):
+        """Return previous HVAC state."""
+        return self._hvac_state_previous
+
+    @property
+    def window_sensor(self):
+        """Return window binary_sensor entity id."""
+        return self._window_sensor
+
+    @property
     def timer_duration(self):
         """Return current timer duration."""
         return self._timer_duration
@@ -659,6 +725,16 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set hvac mode."""
+        if hvac_mode in (HVACMode.HEAT, HVACMode.COOL):
+            if self._hvac_state not in (HVACState.AUTO, HVACState.MANUAL):
+                _LOGGER.warning(
+                    "Cannot set HVAC mode to %s while HVAC state is %s",
+                    hvac_mode,
+                    self._hvac_state,
+                )
+                self.async_write_ha_state()
+                return
+
         if hvac_mode == HVACMode.HEAT:
             self._hvac_mode = HVACMode.HEAT
             self._heating_locked_since = None
@@ -673,6 +749,8 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
             if self._is_device_active:
                 await self._async_heater_turn_off()
             self._hvac_mode_before = None
+            if self._hvac_state in (HVACState.AUTO, HVACState.MANUAL):
+                await self.async_set_hvac_state(HVACState.OFF)
         else:
             _LOGGER.error("Unrecognized hvac mode: %s", hvac_mode)
             return
@@ -734,6 +812,12 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
         minutes = int(duration.total_seconds() // 60)
         await self.async_set_manual_duration_minutes(minutes)
 
+    def _cancel_waiting_temp_timer(self) -> None:
+        """Cancel the 10-minute waiting temp timer if running."""
+        if self._unsub_waiting_temp is not None:
+            self._unsub_waiting_temp()
+            self._unsub_waiting_temp = None
+
     async def async_set_hvac_state(self, hvac_state: HVACState):
         """Set HVAC state SERVICE."""
         newstate = hvac_state
@@ -746,25 +830,31 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
         if self._target_temp_before is None:
             self._target_temp_before = self._target_temp
 
-        if self._hvac_mode_before is None:
-            self._hvac_mode_before = HVACMode.HEAT
+        # Manage HVACStatePrevious: only store base states (never window-open or waiting-temp)
+        if oldstate in VALID_PREVIOUS_HVAC_STATES and newstate not in VALID_PREVIOUS_HVAC_STATES:
+            self._hvac_state_previous = oldstate
+        elif newstate in VALID_PREVIOUS_HVAC_STATES:
+            self._hvac_state_previous = newstate
 
         self._hvac_state = newstate
+
         if newstate == HVACState.MANUAL:
-            self._hvac_state_before = None
-            if oldstate == HVACState.WINDOW_OPEN:
-                await self.async_set_hvac_mode(self._hvac_mode_before)
-            elif oldstate == HVACState.HOME_CLOSED:
-                await self.async_set_hvac_mode(self._hvac_mode_before)
+            if self.ac_mode:
+                self._hvac_mode = HVACMode.COOL
+            else:
+                self._hvac_mode = HVACMode.HEAT
+
+            if oldstate == HVACState.HOME_CLOSED and self._target_temp_before is not None:
                 await self._async_set_temperature(self._target_temp_before)
                 self._target_temp_before = None
 
-            # Internal countdown logic
-            if oldstate == HVACState.WINDOW_OPEN and self._manual_remaining_seconds > 0:
-                self._manual_timer_end = dt_util.utcnow() + timedelta(seconds=self._manual_remaining_seconds)
+            now = dt_util.utcnow()
+            if self._manual_timer_end is not None and now < self._manual_timer_end:
+                remaining_seconds = (self._manual_timer_end - now).total_seconds()
             else:
                 self._manual_remaining_seconds = float(self._manual_duration_minutes * 60)
-                self._manual_timer_end = dt_util.utcnow() + timedelta(seconds=self._manual_remaining_seconds)
+                self._manual_timer_end = now + timedelta(seconds=self._manual_remaining_seconds)
+                remaining_seconds = self._manual_remaining_seconds
 
             self._cancel_internal_timer()
 
@@ -773,12 +863,18 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
                 self._unsub_manual_timer = None
                 self._manual_timer_end = None
                 self._manual_remaining_seconds = 0.0
-                _LOGGER.info("EcoThermostat %s manual timer expired. Returning to AUTO", self.entity_id or self.name)
-                self.hass.create_task(self.async_set_hvac_state(HVACState.AUTO))
+                _LOGGER.info(
+                    "EcoThermostat %s manual timer expired. Returning to AUTO",
+                    self.entity_id or self.name,
+                )
+                if self._hvac_state in (HVACState.WINDOW_OPEN, HVACState.WAITING_TEMP):
+                    self._hvac_state_previous = HVACState.AUTO
+                else:
+                    self.hass.create_task(self.async_set_hvac_state(HVACState.AUTO))
 
             self._unsub_manual_timer = async_call_later(
                 self.hass,
-                self._manual_remaining_seconds,
+                remaining_seconds,
                 _timer_expired,
             )
 
@@ -788,13 +884,12 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
             self._async_notify_listeners()
 
         elif newstate == HVACState.AUTO:
-            self._hvac_state_before = None
-            if oldstate == HVACState.WINDOW_OPEN:
-                await self.async_set_hvac_mode(self._hvac_mode_before)
-            if oldstate == HVACState.HOME_CLOSED:
-                await self.async_set_hvac_mode(self._hvac_mode_before)
+            if self.ac_mode:
+                self._hvac_mode = HVACMode.COOL
             else:
-                self._target_temp_before = None
+                self._hvac_mode = HVACMode.HEAT
+
+            self._target_temp_before = None
 
             self._cancel_internal_timer()
             self._manual_timer_end = None
@@ -807,28 +902,44 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
             self._async_notify_listeners()
 
         elif newstate == HVACState.WINDOW_OPEN:
-            self._hvac_mode_before = self._hvac_mode
-            self._hvac_state_before = oldstate
-            self._target_temp_before = self._target_temp
-            await self.async_set_hvac_mode(HVACMode.OFF)
+            self._cancel_waiting_temp_timer()
+            self._hvac_mode = HVACMode.OFF
+            if self._is_device_active:
+                await self._async_heater_turn_off()
 
-            if self._manual_timer_end is not None:
-                remaining = (self._manual_timer_end - dt_util.utcnow()).total_seconds()
-                self._manual_remaining_seconds = max(0.0, remaining)
-            self._cancel_internal_timer()
-            self._manual_timer_end = None
+            # The manual timer is NOT canceled or extended; its original deadline continues running.
+            self._async_notify_listeners()
 
-            if timer_state and timer_state.state == STATUS_ACTIVE:
-                await self._async_manual_timer_pause()
-
+        elif newstate == HVACState.WAITING_TEMP:
+            self._hvac_mode = HVACMode.OFF
+            if self._is_device_active:
+                await self._async_heater_turn_off()
             self._async_notify_listeners()
 
         elif newstate == HVACState.HOME_CLOSED:
-            self._hvac_mode_before = self._hvac_mode
-            self._hvac_state_before = oldstate
+            self._cancel_waiting_temp_timer()
+            self._hvac_mode = HVACMode.OFF
+            if self._is_device_active:
+                await self._async_heater_turn_off()
+
             self._target_temp_before = self._target_temp
             temp_away = self._presets[PRESET_AWAY]
             await self._async_set_temperature(temp_away)
+
+            self._cancel_internal_timer()
+            self._manual_timer_end = None
+            self._manual_remaining_seconds = 0.0
+
+            if timer_state and timer_state.state != STATUS_IDLE:
+                await self._async_manual_timer_cancel()
+
+            self._async_notify_listeners()
+
+        elif newstate == HVACState.OFF:
+            self._cancel_waiting_temp_timer()
+            self._hvac_mode = HVACMode.OFF
+            if self._is_device_active:
+                await self._async_heater_turn_off()
 
             self._cancel_internal_timer()
             self._manual_timer_end = None
@@ -843,9 +954,173 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
         self.async_write_ha_state()
         _LOGGER.info("OK Service Set HVAC State to: %s", self._hvac_state)
 
+    async def _async_window_sensor_changed(self, event):
+        """Handle window binary_sensor state changes."""
+        new_state = event.data.get("new_state")
+        if new_state is None or new_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            return
+
+        if new_state.state == STATE_ON:
+            await self._async_handle_window_open()
+        elif new_state.state == STATE_OFF:
+            await self._async_handle_window_closed()
+
+    async def _async_handle_window_open(self):
+        """Handle window opened event."""
+        if self._hvac_state == HVACState.WINDOW_OPEN:
+            return
+
+        _LOGGER.info(
+            "EcoThermostat %s: Window opened. Setting state to WINDOW_OPEN",
+            self.entity_id or self.name,
+        )
+        self._cancel_waiting_temp_timer()
+
+        if self._hvac_state in VALID_PREVIOUS_HVAC_STATES:
+            self._hvac_state_previous = self._hvac_state
+
+        self._hvac_state = HVACState.WINDOW_OPEN
+        self._hvac_mode = HVACMode.OFF
+
+        if self._is_device_active:
+            await self._async_heater_turn_off()
+
+        self._async_notify_listeners()
+        self.async_write_ha_state()
+
+    async def _async_handle_window_closed(self):
+        """Handle window closed event."""
+        if self._hvac_state != HVACState.WINDOW_OPEN:
+            return
+
+        _LOGGER.info(
+            "EcoThermostat %s: Window closed. Evaluating recovery",
+            self.entity_id or self.name,
+        )
+
+        is_below = False
+        if self._cur_temp is not None and self._target_temp is not None:
+            if self._cur_temp < (self._target_temp - 0.2):
+                is_below = True
+
+        if is_below:
+            _LOGGER.info(
+                "EcoThermostat %s: Current temp %.1f < Target temp %.1f - 0.2. Setting state to WAITING_TEMP (10 min timer)",
+                self.entity_id or self.name,
+                self._cur_temp,
+                self._target_temp,
+            )
+            self._hvac_state = HVACState.WAITING_TEMP
+            self._hvac_mode = HVACMode.OFF
+            if self._is_device_active:
+                await self._async_heater_turn_off()
+
+            self._cancel_waiting_temp_timer()
+
+            @callback
+            def _waiting_expired(_=None):
+                self._unsub_waiting_temp = None
+                _LOGGER.info(
+                    "EcoThermostat %s: Waiting temp timer (10 min) expired. Restoring previous state",
+                    self.entity_id or self.name,
+                )
+                self.hass.create_task(self._async_restore_previous_state())
+
+            self._unsub_waiting_temp = async_call_later(
+                self.hass,
+                600,
+                _waiting_expired,
+            )
+            self._async_notify_listeners()
+            self.async_write_ha_state()
+        else:
+            _LOGGER.info(
+                "EcoThermostat %s: Temperature recovered or not below threshold. Restoring previous state immediately",
+                self.entity_id or self.name,
+            )
+            await self._async_restore_previous_state()
+
+    async def _async_restore_previous_state(self):
+        """Restore HVACState from HVACStatePrevious."""
+        self._cancel_waiting_temp_timer()
+
+        target_state = self._hvac_state_previous
+        if target_state not in VALID_PREVIOUS_HVAC_STATES:
+            target_state = HVACState.AUTO
+
+        if target_state == HVACState.MANUAL:
+            if self._manual_timer_end is not None and dt_util.utcnow() >= self._manual_timer_end:
+                _LOGGER.info(
+                    "EcoThermostat %s: Manual timer expired while window was open/waiting. Transitioning to AUTO",
+                    self.entity_id or self.name,
+                )
+                target_state = HVACState.AUTO
+                self._cancel_internal_timer()
+                self._manual_timer_end = None
+                self._manual_remaining_seconds = 0.0
+
+        _LOGGER.info(
+            "EcoThermostat %s: Restoring state from %s to %s",
+            self.entity_id or self.name,
+            self._hvac_state,
+            target_state,
+        )
+
+        await self.async_set_hvac_state(target_state)
+
+    async def _check_window_initial_state(self):
+        """Evaluate window sensor state on startup."""
+        if not self._window_sensor:
+            if self._hvac_state in (HVACState.WINDOW_OPEN, HVACState.WAITING_TEMP):
+                await self._async_restore_previous_state()
+            return
+
+        win_state = self.hass.states.get(self._window_sensor)
+        if win_state is None or win_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            return
+
+        if win_state.state == STATE_ON:
+            if self._hvac_state != HVACState.WINDOW_OPEN:
+                if self._hvac_state in VALID_PREVIOUS_HVAC_STATES:
+                    self._hvac_state_previous = self._hvac_state
+                self._hvac_state = HVACState.WINDOW_OPEN
+            self._hvac_mode = HVACMode.OFF
+            if self._is_device_active:
+                await self._async_heater_turn_off()
+            self._async_notify_listeners()
+            self.async_write_ha_state()
+        elif win_state.state == STATE_OFF:
+            if self._hvac_state == HVACState.WINDOW_OPEN:
+                await self._async_handle_window_closed()
+            elif self._hvac_state == HVACState.WAITING_TEMP:
+                if (
+                    self._cur_temp is not None
+                    and self._target_temp is not None
+                    and self._cur_temp >= self._target_temp
+                ):
+                    await self._async_restore_previous_state()
+                else:
+                    self._cancel_waiting_temp_timer()
+
+                    @callback
+                    def _waiting_expired(_=None):
+                        self._unsub_waiting_temp = None
+                        self.hass.create_task(self._async_restore_previous_state())
+
+                    self._unsub_waiting_temp = async_call_later(
+                        self.hass, 600, _waiting_expired
+                    )
+            else:
+                if self._hvac_state in (HVACState.AUTO, HVACState.MANUAL):
+                    self._hvac_mode = HVACMode.COOL if self.ac_mode else HVACMode.HEAT
+                else:
+                    self._hvac_mode = HVACMode.OFF
+                self.async_write_ha_state()
+
     async def async_will_remove_from_hass(self) -> None:
         """Run when entity will be removed from hass."""
         self._cancel_internal_timer()
+        self._cancel_waiting_temp_timer()
         await super().async_will_remove_from_hass()
 
     async def async_turn_on(self) -> None:
@@ -946,6 +1221,21 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
             return
 
         self._async_update_temp(new_state)
+
+        # Check if in WAITING_TEMP and temperature has reached target
+        if self._hvac_state == HVACState.WAITING_TEMP:
+            if self._cur_temp is not None and self._target_temp is not None:
+                if self._cur_temp >= self._target_temp:
+                    _LOGGER.info(
+                        "EcoThermostat %s: Temperature recovered (%.1f >= %.1f). Exiting WAITING_TEMP early",
+                        self.entity_id or self.name,
+                        self._cur_temp,
+                        self._target_temp,
+                    )
+                    self._cancel_waiting_temp_timer()
+                    await self._async_restore_previous_state()
+                    return
+
         await self._async_control_heating()
         self.async_write_ha_state()
 
@@ -1044,6 +1334,11 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
                 )
 
             if not self._active or self._hvac_mode == HVACMode.OFF:
+                return
+
+            if self._hvac_state not in (HVACState.AUTO, HVACState.MANUAL):
+                if self._is_device_active:
+                    await self._async_heater_turn_off()
                 return
 
             # If the `force` argument is True, we
@@ -1330,6 +1625,8 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
             "cold_tolerance": self._cold_tolerance,
             "heating_locked_since": heating_locked_since,
             "hvac_state": self._hvac_state,
+            "hvac_state_previous": self._hvac_state_previous,
+            "window_sensor": self._window_sensor,
             "timer_duration": self._timer_duration,
             "timer_finishes_at": timer_finishes_at,
             "manual_duration_minutes": self._manual_duration_minutes,

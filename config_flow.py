@@ -30,6 +30,7 @@ from .const import (
     CONF_INITIAL_HVAC_MODE,
     CONF_KEEP_ALIVE,
     CONF_MANUAL_TIMER,
+    CONF_WINDOW_SENSOR,
     CONF_MAX_HEATING_LOCKED,
     CONF_MAX_TEMP,
     CONF_MAX_TEMP_JUMPS,
@@ -226,6 +227,9 @@ class EcoThermostatConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             {
                 vol.Optional(CONF_MANUAL_TIMER): selector.EntitySelector(
                     selector.EntitySelectorConfig(domain="timer")
+                ),
+                vol.Optional(CONF_WINDOW_SENSOR): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="binary_sensor")
                 ),
                 vol.Optional(CONF_CALENDAR_HOLIDAYS): selector.EntitySelector(
                     selector.EntitySelectorConfig(domain="calendar")
@@ -455,6 +459,11 @@ class EcoThermostatOptionsFlowHandler(config_entries.OptionsFlow):
                     CONF_MANUAL_TIMER, default=self._get_val(CONF_MANUAL_TIMER)
                 ): selector.EntitySelector(
                     selector.EntitySelectorConfig(domain="timer")
+                ),
+                vol.Optional(
+                    CONF_WINDOW_SENSOR, default=self._get_val(CONF_WINDOW_SENSOR)
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="binary_sensor")
                 ),
                 vol.Optional(
                     CONF_CALENDAR_HOLIDAYS, default=self._get_val(CONF_CALENDAR_HOLIDAYS)

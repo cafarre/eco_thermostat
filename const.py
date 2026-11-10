@@ -37,7 +37,9 @@ CONF_MIN_HOT_TOLERANCE = "min_hot_tolerance"
 CONF_MAX_TEMP_JUMPS = "max_temp_jumps"
 CONF_MAX_HEATING_LOCKED = "max_heating_locked"
 CONF_MANUAL_TIMER = "manual_timer"
+CONF_WINDOW_SENSOR = "window_sensor"
 ATTR_HVAC_STATE = "hvac_state"
+ATTR_HVAC_STATE_PREVIOUS = "hvac_state_previous"
 ATTR_DURATION = "duration"
 CONF_CALENDAR_HOLIDAYS = "calendar_holidays"
 CONF_SCHEDULE_TEMP = "schedule_temp"
@@ -62,5 +64,14 @@ class HVACState(StrEnum):
     AUTO = "auto"
     MANUAL = "manual"
     WINDOW_OPEN = "window-open"
+    WAITING_TEMP = "waiting-temp"
     HOME_CLOSED = "home-closed"
     OFF = "off"
+
+
+VALID_PREVIOUS_HVAC_STATES = (
+    HVACState.AUTO,
+    HVACState.MANUAL,
+    HVACState.HOME_CLOSED,
+    HVACState.OFF,
+)

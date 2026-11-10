@@ -34,6 +34,7 @@
         "description": "Configure safety timers, calendars, dynamic schedules and tolerance rules.",
         "data": {
           "manual_timer": "Manual timer entity",
+          "window_sensor": "Window sensor entity (binary_sensor)",
           "calendar_holidays": "Holiday calendar entity",
           "min_cycle_duration": "Minimum cycle duration",
           "max_time_on": "Maximum consecutive time ON",
@@ -83,6 +84,7 @@
         "description": "Configure safety timers, calendars, dynamic schedules and tolerance rules.",
         "data": {
           "manual_timer": "Manual timer entity",
+          "window_sensor": "Window sensor entity (binary_sensor)",
           "calendar_holidays": "Holiday calendar entity",
           "min_cycle_duration": "Minimum cycle duration",
           "max_time_on": "Maximum consecutive time ON",

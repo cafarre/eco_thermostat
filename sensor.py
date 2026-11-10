@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import logging
+from typing import Any
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -94,6 +95,15 @@ class EcoThermostatHVACStateSensor(SensorEntity):
     def native_value(self) -> str | None:
         """Return the current HVAC state."""
         return str(self._thermostat.hvac_state) if self._thermostat.hvac_state else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return sensor attributes."""
+        return {
+            "hvac_state_previous": str(self._thermostat.hvac_state_previous)
+            if self._thermostat.hvac_state_previous
+            else None,
+        }
 
     async def async_added_to_hass(self) -> None:
         """Handle entity added to hass."""
