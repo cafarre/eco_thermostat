@@ -633,14 +633,34 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
             if (finishes_at := old_state.attributes.get("timer_finishes_at")) is not None:
                 try:
                     self._manual_timer_end = dt_util.parse_datetime(finishes_at)
-                    if self._manual_timer_end is not None and dt_util.utcnow() >= self._manual_timer_end:
+                    now = dt_util.utcnow()
+                    if self._manual_timer_end is not None and now >= self._manual_timer_end:
                         self._manual_timer_end = None
+                        self._manual_remaining_seconds = 0.0
                         if self._hvac_state == HVACState.MANUAL:
                             self._hvac_state = HVACState.AUTO
                         if self._hvac_state_previous == HVACState.MANUAL:
                             self._hvac_state_previous = HVACState.AUTO
+                    elif self._manual_timer_end is not None:
+                        if (
+                            self._hvac_state == HVACState.MANUAL
+                            or self._hvac_state_previous == HVACState.MANUAL
+                        ):
+                            remaining = (self._manual_timer_end - now).total_seconds()
+                            self._manual_remaining_seconds = max(0.0, remaining)
+                            self._schedule_internal_timer(self._manual_remaining_seconds)
+                        else:
+                            self._manual_timer_end = None
+                            self._manual_remaining_seconds = 0.0
                 except Exception:
                     self._manual_timer_end = None
+                    self._manual_remaining_seconds = 0.0
+
+            # Avoid staying stuck in MANUAL with no active timer deadline
+            if self._hvac_state == HVACState.MANUAL and self._manual_timer_end is None:
+                self._hvac_state = HVACState.AUTO
+                if self._hvac_state_previous == HVACState.MANUAL:
+                    self._hvac_state_previous = HVACState.AUTO
 
         else:
             # No previous state, try and restore defaults
@@ -814,6 +834,32 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
             self._unsub_manual_timer()
             self._unsub_manual_timer = None
 
+    def _schedule_internal_timer(self, remaining_seconds: float) -> None:
+        """Schedule internal manual timer expiration callback."""
+        self._cancel_internal_timer()
+
+        @callback
+        def _timer_expired(_=None):
+            self._unsub_manual_timer = None
+            self._manual_timer_end = None
+            self._manual_remaining_seconds = 0.0
+            _LOGGER.info(
+                "EcoThermostat %s manual timer expired. Returning to AUTO",
+                self.entity_id or self.name,
+            )
+            if self._hvac_state in (HVACState.WINDOW_OPEN, HVACState.WAITING_TEMP):
+                self._hvac_state_previous = HVACState.AUTO
+                self._async_notify_listeners()
+                self.async_write_ha_state()
+            else:
+                self.hass.create_task(self.async_set_hvac_state(HVACState.AUTO))
+
+        self._unsub_manual_timer = async_call_later(
+            self.hass,
+            max(0.0, remaining_seconds),
+            _timer_expired,
+        )
+
     async def async_set_manual_duration_minutes(self, minutes: int) -> None:
         """Set manual duration in minutes."""
         self._manual_duration_minutes = max(1, int(minutes))
@@ -902,27 +948,7 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
                 self._manual_timer_end = now + timedelta(seconds=self._manual_remaining_seconds)
                 remaining_seconds = self._manual_remaining_seconds
 
-            self._cancel_internal_timer()
-
-            @callback
-            def _timer_expired(_=None):
-                self._unsub_manual_timer = None
-                self._manual_timer_end = None
-                self._manual_remaining_seconds = 0.0
-                _LOGGER.info(
-                    "EcoThermostat %s manual timer expired. Returning to AUTO",
-                    self.entity_id or self.name,
-                )
-                if self._hvac_state in (HVACState.WINDOW_OPEN, HVACState.WAITING_TEMP):
-                    self._hvac_state_previous = HVACState.AUTO
-                else:
-                    self.hass.create_task(self.async_set_hvac_state(HVACState.AUTO))
-
-            self._unsub_manual_timer = async_call_later(
-                self.hass,
-                remaining_seconds,
-                _timer_expired,
-            )
+            self._schedule_internal_timer(remaining_seconds)
 
             if timer_state and timer_state.state != STATUS_ACTIVE:
                 await self._async_manual_timer_start()
@@ -1381,10 +1407,12 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
             await self._async_heater_turn_off()
 
     async def _check_timer_initial_state(self):
-        """Prevent the device from keep MANUAL if timer is OFF."""
+        """Prevent the device from keeping MANUAL if timer is OFF."""
         timer_state = self.hass.states.get(self._manual_timer)
-        if timer_state == STATUS_IDLE:
-            if self._hvac_state == HVACMode.MANUAL:
+        if timer_state is None:
+            return
+        if timer_state.state == STATUS_IDLE:
+            if self._hvac_state == HVACState.MANUAL:
                 _LOGGER.warning(
                     (
                         "The timer is IDLE, but the hvac state is MANUAL. Turning to AUTO"
@@ -1393,10 +1421,10 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
                     self._manual_timer,
                 )
                 await self.async_set_hvac_state(HVACState.AUTO)
-        elif self._hvac_state != HVACMode.MANUAL:
+        elif timer_state.state == STATUS_ACTIVE and self._hvac_state != HVACState.MANUAL:
             _LOGGER.warning(
                 (
-                    "The timer is IDLE, but the hvac state is MANUAL. Turning to AUTO"
+                    "The timer is ACTIVE, but the hvac state is not MANUAL. Turning to MANUAL"
                     " timer %s"
                 ),
                 self._manual_timer,
@@ -1420,7 +1448,6 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
 
         self.async_write_ha_state()
 
-    @callback
     async def _async_timer_changed(self, event):
         """Handle manual timer state changes."""
         new_state = event.data.get("new_state")
@@ -1749,6 +1776,11 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
         timer_finishes_at = (
             self._manual_timer_end.isoformat() if self._manual_timer_end is not None else None
         )
+        timer_remaining_seconds = 0
+        if self._manual_timer_end is not None:
+            timer_remaining_seconds = max(
+                0, int((self._manual_timer_end - dt_util.utcnow()).total_seconds())
+            )
         return {
             "hot_tolerance": self._hot_tolerance,
             "cold_tolerance": self._cold_tolerance,
@@ -1759,7 +1791,7 @@ class EcoThermostat(ClimateEntity, RestoreEntity):
             "timer_duration": self._timer_duration,
             "timer_finishes_at": timer_finishes_at,
             "manual_duration_minutes": self._manual_duration_minutes,
-            "timer_remaining_seconds": int(self._manual_remaining_seconds) if self._manual_timer_end else 0,
+            "timer_remaining_seconds": timer_remaining_seconds,
             "is_week_holiday": self._attr_is_week_holiday,
             "is_calendar_holiday": self._attr_is_calendar_holiday,
             "is_holiday": self._attr_is_holiday,
